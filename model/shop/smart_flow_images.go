@@ -36,8 +36,8 @@ type SmartFlowImage struct {
 // 分表key
 var ShardTableKey uint
 
-// 分批查询数据，每批查询的数据量
-var BatchNum = 50000
+// 分批查询数据条数
+var BatchNum = 100000
 
 // 批量插入到MySQL的条数
 var SliceNum = 500
@@ -66,7 +66,7 @@ func (s SmartFlowImage) OriginTableName() string {
 	return "4s_wx_db.4s_smart_flow_images"
 }
 
-// 获取旧表图片数据
+// 获取原始表图片数据
 func (s SmartFlowImage) GetOriginImages(shopId uint, offset uint) ([]SmartFlowImage, error) {
 	db, err := model.GormOpenDB()
 	if err != nil {
@@ -88,7 +88,7 @@ func (s SmartFlowImage) GetOriginImages(shopId uint, offset uint) ([]SmartFlowIm
 	return smartFlowImages, nil
 }
 
-// 查询旧表总数据量
+// 查询原始表总数据量
 func (s SmartFlowImage) QueryTotalNum(shopId uint) (uint, error) {
 	db, err := model.GormOpenDB()
 	if err != nil {
@@ -208,7 +208,7 @@ func (s SmartFlowImage) BatchCreate(db *gorm.DB, images []SmartFlowImage, migrat
 			"action":   "BatchCreate",
 			"location": location,
 			"error":    err.Error(),
-		}).Info("批量插入数据失败")
+		}).Info("插入数据失败，请查看日志")
 
 		return err
 	}
@@ -246,11 +246,10 @@ func (s SmartFlowImage) Migrate() error {
 			continue
 		}
 
-		// 分多少批导入
+		// 防止一家店数据量过大导致内存溢出，分批次导入店数据，每批导入BatchNum条
 		batchTimes := math.Ceil(float64(count) / float64(BatchNum))
 		fmt.Printf("查询出店ID=%d的总数据为%d条，分%d批导入，每批导入%d条数据\n", shopId, count, int(batchTimes), BatchNum)
 
-		// 防止一家店数据量过大导致内存溢出，分批次导入店数据，每批导入BatchNum条
 		batchIndex := 0
 		for i := 0; i < int(count); i += BatchNum {
 			images, _ := s.GetOriginImages(shopId, uint(i))
