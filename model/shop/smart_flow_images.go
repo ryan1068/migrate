@@ -61,7 +61,7 @@ func (s *SmartFlowImage) SetShardTableIndex(shardTableKey uint) {
 	return
 }
 
-// 旧表名
+// 原始表名
 func (s SmartFlowImage) OriginTableName() string {
 	return "4s_wx_db.4s_smart_flow_images"
 }
