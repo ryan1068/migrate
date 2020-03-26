@@ -8,6 +8,7 @@ import (
 	"math"
 	"migrate/model"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -37,10 +38,12 @@ type SmartFlowImage struct {
 var ShardTableKey uint
 
 // 分批查询数据条数
-var BatchNum = 100000
+var BatchNum = 300000
 
 // 批量插入到MySQL的条数
 var SliceNum = 500
+
+var TableNum = 100
 
 // 库名
 func (s SmartFlowImage) DBName() string {
@@ -110,7 +113,9 @@ func (s SmartFlowImage) QueryTotalNum(shopId uint) (uint, error) {
 
 // 创建/删除分表
 func (s SmartFlowImage) CreateTables(ac string) error {
+	fmt.Print("任务开始...\n")
 	startTime := time.Now().Unix()
+
 	db, err := model.GormOpenDB()
 	db.DB().SetMaxIdleConns(10)
 	db.DB().SetMaxOpenConns(100)
@@ -119,77 +124,35 @@ func (s SmartFlowImage) CreateTables(ac string) error {
 	}
 	defer db.Close()
 
-	//wg := sync.WaitGroup{}
-	//wg.Add(100)
-
-	fmt.Print("任务开始...\n")
-
-	ch := make(chan int, 100)
+	ch := make(chan int, TableNum)
+	wg := sync.WaitGroup{}
+	wg.Add(TableNum)
 
 	var tables [100]int
 	for i, _ := range tables {
 		if ac == "create" {
 			go func(num int) {
 				db.Exec("create table zd_sf.smart_flow_images_" + strconv.Itoa(num) + " like " + s.OriginTableName())
-				//wg.Done()
+				wg.Done()
 				ch <- num
 			}(i)
 		} else if ac == "drop" {
 			go func(num int) {
 				db.Exec("drop table zd_sf.smart_flow_images_" + strconv.Itoa(num))
-				//wg.Done()
+				wg.Done()
 				ch <- num
 			}(i)
 		}
 	}
-	//wg.Wait()
+	wg.Wait()
 
-	//for i, _ := range tables {
-	//	v := <-ch
-	//
-	//	progressString := fmt.Sprintf("%.2f", float64(i+1)/float64(len(tables)))
-	//	progressFloat,_ := strconv.ParseFloat(progressString, 64)
-	//	progress := int(progressFloat * 100)
-	//
-	//	fmt.Printf("已经创建第%d个表，表id=%d, 当前进度为%d%s\n", i+1, v, progress, "%")
-	//
-	//	if i == 99 {
-	//		fmt.Println("已经全部创建完成")
-	//	}
-	//}
-
-	ticker := time.NewTicker(time.Second * 1)
-	defer ticker.Stop()
-
-	for {
-		select {
-		//case <-ch:
-		//	len := len(ch)
-		//	if len == 99 {
-		//		fmt.Printf("创建完成")
-		//	}
-		//	fmt.Printf("已经创建第%d个表\n", len)
-		case <-ticker.C:
-			chanLen := len(ch)
-			if chanLen == 100 {
-				fmt.Printf("创建完成，累计耗时：%ds\n", time.Now().Unix()-startTime)
-				return nil
-			}
-
-			progressString := fmt.Sprintf("%.2f", float64(chanLen)/float64(len(tables)))
-			progressFloat, _ := strconv.ParseFloat(progressString, 64)
-			progress := int(progressFloat * 100)
-
-			fmt.Printf("已经创建第%d个表, 当前进度为%d%s\n", chanLen, progress, "%")
-
-		}
-	}
+	fmt.Printf("创建完成，累计耗时：%ds\n", time.Now().Unix()-startTime)
 
 	return nil
 }
 
 // 批量插入数据
-func (s SmartFlowImage) BatchCreate(db *gorm.DB, images []SmartFlowImage, migrateChan chan int, location string) error {
+func (s SmartFlowImage) BatchCreate(db *gorm.DB, images []SmartFlowImage, migrateChan chan int) error {
 	var buffer bytes.Buffer
 	sql := "insert into " + s.TableName() + " (`area_id`, `track_id`, `aimo_face_pic_id`, `smart_flow_id`, `user_mark`, `capture_quality`, `box_source_id`, `face_sets_id`, `timestamp`, `frame_image_id`, `frame_advisor_id`, `x_axis`, `y_axis`, `frame_width`, `frame_height`, `is_del`, `created_at`, `updated_at`) values"
 	if _, err := buffer.WriteString(sql); err != nil {
@@ -205,9 +168,8 @@ func (s SmartFlowImage) BatchCreate(db *gorm.DB, images []SmartFlowImage, migrat
 
 	if err := db.Exec(buffer.String()).Error; err != nil {
 		model.Mgoruser().WithFields(logrus.Fields{
-			"action":   "BatchCreate",
-			"location": location,
-			"error":    err.Error(),
+			"action": "BatchCreate",
+			"error":  err.Error(),
 		}).Info("插入数据失败，请查看日志")
 
 		return err
@@ -265,11 +227,11 @@ func (s SmartFlowImage) Migrate() error {
 			for i := 0; i < imagesLen; i += SliceNum {
 				if index == int(goTimes)-1 {
 					sliceImages := images[i:imagesLen]
-					go s.BatchCreate(db, sliceImages, migrateChan, fmt.Sprintf("%d-%d-%d", shopId, BatchNum, SliceNum))
+					go s.BatchCreate(db, sliceImages, migrateChan)
 
 				} else {
 					sliceImages := images[i : (index+1)*SliceNum]
-					go s.BatchCreate(db, sliceImages, migrateChan, fmt.Sprintf("%d-%d-%d", shopId, BatchNum, SliceNum))
+					go s.BatchCreate(db, sliceImages, migrateChan)
 				}
 				index++
 			}
@@ -296,8 +258,9 @@ func (s SmartFlowImage) Migrate() error {
 		}
 
 		fmt.Printf("成功导入店ID=%d数据，累计耗时：%ds\n\n", shopId, time.Now().Unix()-startTime)
-
 	}
+
+	fmt.Printf("全部导入完成。\n")
 
 	return nil
 }
