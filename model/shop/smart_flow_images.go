@@ -138,9 +138,9 @@ func (s SmartFlowImage) CreateTables(ac string) error {
 // 操作表
 func (s SmartFlowImage) handleTable(db *gorm.DB, wg *sync.WaitGroup, ac string, num int) {
 	if ac == "create" {
-		db.Exec("create table zd_sf.smart_flow_images_" + strconv.Itoa(num) + " like " + s.OriginTableName())
+		db.Exec(fmt.Sprintf("CREATE TABLE zd_sf.smart_flow_images_%d LIKE %s", num, s.OriginTableName()))
 	} else if ac == "drop" {
-		db.Exec("drop table zd_sf.smart_flow_images_" + strconv.Itoa(num))
+		db.DropTable(fmt.Sprintf("smart_flow_images_%d", num))
 	}
 	wg.Done()
 }
@@ -148,7 +148,7 @@ func (s SmartFlowImage) handleTable(db *gorm.DB, wg *sync.WaitGroup, ac string, 
 // 批量插入数据
 func (s SmartFlowImage) BatchCreate(db *gorm.DB, images []SmartFlowImage, migrateChan chan int) error {
 	var buffer bytes.Buffer
-	sql := "insert into " + s.TableName() + " (`area_id`, `track_id`, `aimo_face_pic_id`, `smart_flow_id`, `user_mark`, `capture_quality`, `box_source_id`, `face_sets_id`, `timestamp`, `frame_image_id`, `frame_advisor_id`, `x_axis`, `y_axis`, `frame_width`, `frame_height`, `is_del`, `created_at`, `updated_at`) values"
+	sql := fmt.Sprintf("INSERT INTO %s (`area_id`, `track_id`, `aimo_face_pic_id`, `smart_flow_id`, `user_mark`, `capture_quality`, `box_source_id`, `face_sets_id`, `timestamp`, `frame_image_id`, `frame_advisor_id`, `x_axis`, `y_axis`, `frame_width`, `frame_height`, `is_del`, `created_at`, `updated_at`) VALUES", s.TableName())
 	if _, err := buffer.WriteString(sql); err != nil {
 		return err
 	}
@@ -248,6 +248,7 @@ func (s SmartFlowImage) Migrate() error {
 				}
 			}
 
+			close(migrateChan)
 			batchIndex++
 		}
 
