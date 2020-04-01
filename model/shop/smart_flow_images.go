@@ -113,9 +113,6 @@ func (s SmartFlowImage) QueryTotalNum(shopId uint) (uint, error) {
 
 // 创建/删除分表
 func (s SmartFlowImage) CreateTables(ac string) error {
-	fmt.Print("任务开始...\n")
-	startTime := time.Now().Unix()
-
 	db, err := model.GormOpenDB()
 	db.DB().SetMaxIdleConns(10)
 	db.DB().SetMaxOpenConns(100)
@@ -124,31 +121,28 @@ func (s SmartFlowImage) CreateTables(ac string) error {
 	}
 	defer db.Close()
 
-	ch := make(chan int, TableNum)
 	wg := sync.WaitGroup{}
 	wg.Add(TableNum)
 
 	var tables [100]int
 	for i, _ := range tables {
-		if ac == "create" {
-			go func(num int) {
-				db.Exec("create table zd_sf.smart_flow_images_" + strconv.Itoa(num) + " like " + s.OriginTableName())
-				wg.Done()
-				ch <- num
-			}(i)
-		} else if ac == "drop" {
-			go func(num int) {
-				db.Exec("drop table zd_sf.smart_flow_images_" + strconv.Itoa(num))
-				wg.Done()
-				ch <- num
-			}(i)
-		}
+		go s.handleTable(db, &wg, ac, i)
 	}
 	wg.Wait()
 
-	fmt.Printf("创建完成，累计耗时：%ds\n", time.Now().Unix()-startTime)
+	fmt.Printf("创建完成")
 
 	return nil
+}
+
+// 操作表
+func (s SmartFlowImage) handleTable(db *gorm.DB, wg *sync.WaitGroup, ac string, num int) {
+	if ac == "create" {
+		db.Exec("create table zd_sf.smart_flow_images_" + strconv.Itoa(num) + " like " + s.OriginTableName())
+	} else if ac == "drop" {
+		db.Exec("drop table zd_sf.smart_flow_images_" + strconv.Itoa(num))
+	}
+	wg.Done()
 }
 
 // 批量插入数据
