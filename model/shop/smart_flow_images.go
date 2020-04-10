@@ -37,20 +37,19 @@ type SmartFlowImage struct {
 // 分表key
 var ShardTableKey uint
 
-// 分批查询数据条数
+// 每批查询数据条数
 var BatchNum = 300000
 
-// 批量插入到MySQL的条数
+// 每批插入MySQL条数
 var SliceNum = 500
 
 var TableNum = 100
 
-// 库名
 func (s SmartFlowImage) DBName() string {
-	return "zd_sf"
+	return "zd"
 }
 
-// 新的分表表名
+// 新的分表名
 func (s SmartFlowImage) TableName() string {
 	if ShardTableKey == 0 {
 		panic("必须设置分表key")
@@ -69,7 +68,7 @@ func (s SmartFlowImage) OriginTableName() string {
 	return "4s_wx_db.4s_smart_flow_images"
 }
 
-// 获取原始表图片数据
+// 分批获取原始表图片数据
 func (s SmartFlowImage) GetOriginImages(shopId uint, offset uint) ([]SmartFlowImage, error) {
 	db, err := model.GormOpenDB()
 	if err != nil {
@@ -92,7 +91,7 @@ func (s SmartFlowImage) GetOriginImages(shopId uint, offset uint) ([]SmartFlowIm
 }
 
 // 查询原始表总数据量
-func (s SmartFlowImage) QueryTotalNum(shopId uint) (uint, error) {
+func (s SmartFlowImage) QueryOriginTotalNum(shopId uint) (uint, error) {
 	db, err := model.GormOpenDB()
 	if err != nil {
 		return 0, err
@@ -111,8 +110,7 @@ func (s SmartFlowImage) QueryTotalNum(shopId uint) (uint, error) {
 	return count, nil
 }
 
-// 创建/删除分表
-func (s SmartFlowImage) CreateTables(ac string) error {
+func (s SmartFlowImage) HandleTable(ac string) error {
 	db, err := model.GormOpenDB()
 	db.DB().SetMaxIdleConns(10)
 	db.DB().SetMaxOpenConns(100)
@@ -126,17 +124,14 @@ func (s SmartFlowImage) CreateTables(ac string) error {
 
 	var tables [100]int
 	for i, _ := range tables {
-		go s.handleTable(db, &wg, ac, i)
+		go s.exec(db, &wg, ac, i)
 	}
 	wg.Wait()
-
-	fmt.Printf("创建完成")
 
 	return nil
 }
 
-// 操作表
-func (s SmartFlowImage) handleTable(db *gorm.DB, wg *sync.WaitGroup, ac string, num int) {
+func (s SmartFlowImage) exec(db *gorm.DB, wg *sync.WaitGroup, ac string, num int) {
 	if ac == "create" {
 		db.Exec(fmt.Sprintf("CREATE TABLE zd_sf.smart_flow_images_%d LIKE %s", num, s.OriginTableName()))
 	} else if ac == "drop" {
@@ -145,8 +140,7 @@ func (s SmartFlowImage) handleTable(db *gorm.DB, wg *sync.WaitGroup, ac string, 
 	wg.Done()
 }
 
-// 批量插入数据
-func (s SmartFlowImage) BatchCreate(db *gorm.DB, images []SmartFlowImage, migrateChan chan int) error {
+func (s SmartFlowImage) BulkStorage(db *gorm.DB, images []SmartFlowImage, migrateChan chan int) error {
 	var buffer bytes.Buffer
 	sql := fmt.Sprintf("INSERT INTO %s (`area_id`, `track_id`, `aimo_face_pic_id`, `smart_flow_id`, `user_mark`, `capture_quality`, `box_source_id`, `face_sets_id`, `timestamp`, `frame_image_id`, `frame_advisor_id`, `x_axis`, `y_axis`, `frame_width`, `frame_height`, `is_del`, `created_at`, `updated_at`) VALUES", s.TableName())
 	if _, err := buffer.WriteString(sql); err != nil {
@@ -173,7 +167,6 @@ func (s SmartFlowImage) BatchCreate(db *gorm.DB, images []SmartFlowImage, migrat
 	return nil
 }
 
-// 旧数据迁移
 func (s SmartFlowImage) Migrate() error {
 	startTime := time.Now().Unix()
 
@@ -190,30 +183,26 @@ func (s SmartFlowImage) Migrate() error {
 
 	shopIds := []uint{1303, 1390, 1301, 1302, 1304, 1305}
 
-	// 按店ID遍历查询数据
 	for _, shopId := range shopIds {
 		s.SetShardTableIndex(shopId)
 
 		fmt.Printf("开始查询店ID=%d的总数据...\n", shopId)
 
-		// 查询一家店的数据总量
-		count, _ := s.QueryTotalNum(shopId)
+		count, _ := s.QueryOriginTotalNum(shopId)
 		if count == 0 {
 			continue
 		}
 
-		// 防止一家店数据量过大导致内存溢出，分批次导入店数据，每批导入BatchNum条
 		batchTimes := math.Ceil(float64(count) / float64(BatchNum))
 		fmt.Printf("查询出店ID=%d的总数据为%d条，分%d批导入，每批导入%d条数据\n", shopId, count, int(batchTimes), BatchNum)
 
-		batchIndex := 0
+		batchIndex := 1
 		for i := 0; i < int(count); i += BatchNum {
 			images, _ := s.GetOriginImages(shopId, uint(i))
 			imagesLen := len(images)
 
-			fmt.Printf("开始导入第%d批%d条数据...\n", batchIndex+1, imagesLen)
+			fmt.Printf("开始导入第%d批%d条数据...\n", batchIndex, imagesLen)
 
-			// 动态计算协程数量，把每批的数据量 分组批量插入数据表
 			goTimes := math.Ceil(float64(imagesLen) / float64(SliceNum))
 			migrateChan := make(chan int, int(goTimes))
 
@@ -221,11 +210,11 @@ func (s SmartFlowImage) Migrate() error {
 			for i := 0; i < imagesLen; i += SliceNum {
 				if index == int(goTimes)-1 {
 					sliceImages := images[i:imagesLen]
-					go s.BatchCreate(db, sliceImages, migrateChan)
+					go s.BulkStorage(db, sliceImages, migrateChan)
 
 				} else {
 					sliceImages := images[i : (index+1)*SliceNum]
-					go s.BatchCreate(db, sliceImages, migrateChan)
+					go s.BulkStorage(db, sliceImages, migrateChan)
 				}
 				index++
 			}
@@ -236,7 +225,7 @@ func (s SmartFlowImage) Migrate() error {
 				case <-ticker.C:
 					chanLen := len(migrateChan)
 					if chanLen == int(goTimes) {
-						fmt.Printf("第%d批完成100%s，累计耗时：%ds\n", batchIndex+1, "%", time.Now().Unix()-startTime)
+						fmt.Printf("第%d批完成100%s，累计耗时：%ds\n", batchIndex, "%", time.Now().Unix()-startTime)
 						break Loop
 					}
 

@@ -12,15 +12,15 @@ func main() {
 	flag.Parse()
 
 	if exists, _ := InSlice(*mode, []string{"tables", "migrate"}); !exists {
-		panic("运行参数有误，请重新输入")
+		panic("mode input error")
 	}
 
 	images := &shop.SmartFlowImage{}
 	if *mode == "tables" {
 		if exists, _ := InSlice(*mode, []string{"create", "drop"}); !exists {
-			panic("操作表参数有误，请重新输入")
+			panic("ac input error")
 		}
-		images.CreateTables(*ac)
+		images.HandleTable(*ac)
 	} else if *mode == "migrate" {
 		images.Migrate()
 	}
